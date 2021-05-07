@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+#
+# Author: Pablo Henrique
+#
+# Objective: Recursively collect subdomains based on user's depht preference
+# Objetivo : Coleta subdomínios recursivamente baseado na "profundidade" que o usuário quer
+#
+
+blue=$(tput setaf 4)
+red=$(tput setaf 196)
+green=$(tput setaf 46)
+warn=$(tput setaf 227)
+yellow=$(tput setaf 11)
+violet=$(tput setaf 199)
+purple=$(tput setaf 127)
+norm=$(tput sgr0)
+uf=$(tput setaf 131)
+deps_color=$(tput setaf 121)
+wht=$(tput setaf 7)
+
+BANNER=$(
+  cat \
+    <<LOGO
+${violet}
+   ▄████████ ███    █▄  ▀█████████▄     ▄████████    ▄████████  ▄████████  ▄██████▄  ███▄▄▄▄ 
+  ███    ███ ███    ███   ███    ███   ███    ███   ███    ███ ███    ███ ███    ███ ███▀▀▀██▄ 
+  ███    █▀  ███    ███   ███    ███   ███    ███   ███    █▀  ███    █▀  ███    ███ ███   ███ 
+  ███        ███    ███  ▄███▄▄▄██▀   ▄███▄▄▄▄██▀  ▄███▄▄▄     ███        ███    ███ ███   ███ 
+▀███████████ ███    ███ ▀▀███▀▀▀██▄  ▀▀███▀▀▀▀▀   ▀▀███▀▀▀     ███        ███    ███ ███   ███ 
+         ███ ███    ███   ███    ██▄ ▀███████████   ███    █▄  ███    █▄  ███    ███ ███   ███ 
+   ▄█    ███ ███    ███   ███    ███   ███    ███   ███    ███ ███    ███ ███    ███ ███   ███ 
+ ▄████████▀  ████████▀  ▄█████████▀    ███    ███   ██████████ ████████▀   ▀██████▀   ▀█   █▀  
+                                       ███    ███                                              
+${norm}            
+          ${yellow}Coded with${norm} ${red}!<3${norm} ${yellow}By${norm} ${green}deeman_est${norm}
+LOGO
+)
+printf "\n\n %s \n\n" "$BANNER"
+TOKEN="run_$RANDOM"
+T="/tmp"
+
+deps=(
+  "amass"
+  "jsfinder"
+  "anew"
+  "dnsx"
+  "subfinder"
+  "theharvester"
+  "nmap"
+)
+
+subregex_blacklist=(
+  "this_is_research.next_query.is_from_us.if_problem.please_see"
+  "www"
+  "ntsrv"
+)
+
+# Check if all dependencies are installed
+env_dirs=$(echo "$PATH" | tr ':' ' ')
+need_to_install=()
+for dep in "${deps[@]}"; do
+  found=0
+  for dir in $env_dirs; do
+
+    [ -f "$dir/$dep" ] && found=1
+  done
+
+  [ "$found" -eq 0 ] && need_to_install+=("$dep")
+done
+
+if [ "${#need_to_install[*]}" -ge 1 ]; then
+  echo -e "\n\t ${warn}Please, install all dependencies before running${norm}: \n"
+  printf "\n\t\t ${deps_color}%s${norm} \t ${yellow}[${norm}${red}NOT INSTALLED${norm}${yellow}]${norm}" "${need_to_install[@]}"
+  echo -e "\n\n\n\n\t ${wht}Bye bye${norm} \n\n"
+  exit 1
+fi
+
+HELP=$(
+  cat <<HELP
+\
+          ${blue}Use${norm}: ${purple}domain${norm} ${uf}depht(opcional)${norm} ${green}subdomains.list(opcional)${norm} 
+HELP
+)
+[ -z "$1" ] && echo -e "$HELP" && exit
+
+root_domain="$1"
+SAVE_IN="/subrecon/$root_domain"
+RESULT_FNAME="$SAVE_IN/ONE_FOR_ALL.subs"
+
+[ -z "$2" ] && DEPHT=1 || DEPHT="$2"
+SUBDOMAIN_LIST="$3"
+
+mkdir -p "$SAVE_IN" 2>/dev/null
+
+tools=("subfinder" "amass" "theharvester" "jsfindersubs")
+tools_output=($(printf "$T/%s_$TOKEN " "${tools[@]}"))
+ROOT_ANALISED=0
+
+trap save_results SIGINT
+function save_results() {
+
+  SNAME="$(echo "$root_domain" | tr '.' '-').subs"
+  echo -e "\n\t Saving all results in current dir as $SNAME..."
+
+  cat "$SAVE_IN"/*.subs.live 2>/dev/null | anew >"$PWD/$SNAME"
+  echo -e "\n\n\n\n\t ${wht}Bye bye${norm} \n"
+  exit
+}
+
+function collectSubs() {
+  local domain="$(echo "$1" | sed -E 's/^(http|https):\/\///')"
+  skip_sub=0
+
+  # searches for bad subdomains and filter out
+  for bad_sub in "${subregex_blacklist[@]}"; do
+    if [[ "$domain" = *"$bad_sub"* ]]
+    then
+        skip_sub=1
+        return;
+    fi
+  done
+
+  if [ "$domain" = "$root_domain" ] && [ "$ROOT_ANALISED" -eq 1 ]; then
+    skip_sub=1
+    return
+  fi
+
+  SAVE_AS="$SAVE_IN/$domain.subs"
+
+  echo -e "\t${blue}[${norm}${yellow}Subfinder${norm}${blue}]${norm} ${uf}on${norm} ${violet}$domain${norm} \n"
+  subfinder -d "$domain" -silent -t 500 -all 1>"${tools_output[0]}"
+
+  echo -e "\t${blue}[${norm}${yellow}AMASS${norm}${blue}]${norm} ${uf}on${norm} ${violet}$domain${norm} \n"
+  amass enum -passive -d "$domain" -o "${tools_output[1]}" -silent -nocolor
+
+  echo -e "\t${blue}[${norm}${yellow}TheHarvester${norm}${blue}]${norm} ${uf}on${norm} ${violet}$domain${norm} \n"
+  theharvester -d "$domain" -b google,bing,censys,rapiddns,securityTrails,dnsdumpster,urlscan -f "${tools_output[2]}" -c &>/dev/null
+
+  # echo -e "\t${blue}[${norm}${yellow}JSFINDER${norm}${blue}]${norm} ${uf}on${norm} ${violet}$domain${norm} \n"
+  # touch "${tools_output[2]}" # Jsfinder does not create a new file, just append
+  # jsfinder -u "http://$domain" -os "${tools_output[3]}" 1>/dev/null
+
+  echo -e "\tMerging all results... "
+  cat "${tools_output[@]}" 2>/dev/null | anew >"$SAVE_AS"
+
+  # Clear temp files after merging
+  rm "${tools_output[@]}" &>/dev/null
+
+  SUBS_FOUND=$(wc -l "$SAVE_AS" | cut -d ' ' -f1)
+  echo -e "\tSubdomains [$SUBS_FOUND] found, saved in $SAVE_AS \n"
+
+  #
+  echo -e "\t${yellow}Cheking${norm} ${deps_color}for${norm} ${green}live${norm} ${violet}subdomains${norm}\n"
+  tmp1="$SAVE_AS.live"
+  while IFS= read -r subdomain; do
+    [ "$subdomain" = "$domain" ] && continue
+
+    subdomain_ip=$(echo "$subdomain" | dnsx -silent -resp-only -wd "$root_domain")
+    [ -z "$subdomain_ip" ] && continue
+
+    # Some subdomains returns more than one IPV4, so we need to iterate over these ips and get at least one live host
+    for subip in $(echo "$subdomain_ip" | tr '\n' ' '); do
+      isUP=$(nmap -PS80,21,22,8080 "$subip" -sn -T5 2>/dev/null)
+      if [[ "$isUP" = *"(1 host up)"* ]]; then
+        echo "$subdomain" >>"$tmp1"
+        break
+      fi
+    done
+  done <"$SAVE_AS"
+
+  SAVE_AS="$tmp1"
+  PUB_SUBS=$(wc -l "$tmp1" 2>/dev/null | cut -d ' ' -f1)
+  [ -z "$PUB_SUBS" ] && PUB_SUBS="0"
+
+  echo -e "\t${yellow}Identified${norm} [${violet}$PUB_SUBS${norm}] ${yellow}[${norm}${green}LIVE-PUBLIC${norm}${yellow}]${norm} ${deps_color}subdomains${norm} \n"
+}
+
+function bunkCollect() {
+  file_or_files="$1"
+
+  sub_list=""
+  for file in $file_or_files; do
+    [ -f "$file" ] && rd="$file" || rd="$SAVE_IN/$file.subs"
+    fsubname="$(basename "${file//.subs/}")"
+    [ ! -f "$rd" ] && break;
+
+    while IFS= read -r sub; do
+      [ -z "$sub" ] || [ "$sub" = "$fsubname" ] && continue;
+
+      collectSubs "$sub"
+      [ "$skip_sub" -eq 1 ] && continue;
+
+      sub_list+=" $sub"
+    done <"$rd"
+  done
+}
+
+if [ -f "$SUBDOMAIN_LIST" ]; then
+  echo -e "\n\tSubdomain list found, skipping $root_domain subdomain enumeration..."
+  cat "$SUBDOMAIN_LIST" 2>/dev/null | anew >/tmp/sublst$TOKEN
+  SAVE_AS="/tmp/sublst$TOKEN"
+else
+  echo -e "\n\tStarting to get subdomains of $root_domain \n"
+  collectSubs "$root_domain"
+fi
+
+ROOT_ANALISED=1
+if [ "$DEPHT" -ge 1 ]; then
+  echo -e "\n\t Collecting subdomains of subdomains..."
+  while IFS= read -r first_level_subdomain; do
+
+    [ "$first_level_subdomain" = "$root_domain" ] && continue
+    [ "$first_level_subdomain" = "" ] && continue
+
+    # First depht level of enumeration
+    collectSubs "$first_level_subdomain"
+    bunkCollect "$SAVE_AS"
+
+    # Elegant recursion, i'm very proud.
+    for ((i = 0; i < DEPHT; i++)); do
+      bunkCollect "$sub_list"
+    done
+  done <"$SAVE_AS"
+
+else
+  echo -e "\n\t Skipping enumeration of sub-subdomains...."
+fi
+
+echo -e "\n\t Merging all results..."
+# Searches for zero sized subdomain files and get its name as a subdomain
+single_subs=""
+
+# Discard death subs
+NOANSER_SUBS="$SAVE_IN/noanswer_subs"
+mkdir "$NOANSER_SUBS"
+move "$SAVE_IN/*.subs""$NOANSER_SUBS/"
+
+# shellcheck disable=SC2045
+for f in $(ls $SAVE_IN/); do
+  fl="$SAVE_IN/$f"
+  [ -f "$fl" ] && continue
+  s=$(cat "$fl")
+  [ "$s" = "" ] && single_subs+="${f//.subs.live/} "
+
+done
+
+echo "$single_subs" | tr ' ' '\n' | cat "$SAVE_IN"/*.subs.live 2>/dev/null | anew >"$RESULT_FNAME"
+echo -e "\n\t Ok, saved in: $RESULT_FNAME"
+echo -e "\n\n\n\n\t ${wht}Bye bye${norm} \n"
